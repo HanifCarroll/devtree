@@ -1,3 +1,5 @@
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::{
     collections::BTreeMap,
     env,
@@ -198,6 +200,8 @@ struct WorktreeState {
 #[derive(Debug, Serialize, Deserialize)]
 struct AppState {
     pid: u32,
+    #[serde(default)]
+    process_group_id: Option<u32>,
     url: String,
     log_path: PathBuf,
     started_at: DateTime<Utc>,
@@ -478,15 +482,14 @@ fn start_app(ctx: &mut ContextState, branch: &str, app_name: &str) -> Result<()>
         .with_context(|| format!("open {}", log_path.display()))?;
     let err = log.try_clone()?;
 
-    let mut child_cmd = match app.url {
-        UrlConfig::Portless { .. } => shell_exec_command(&command),
-        UrlConfig::RawPort { .. } | UrlConfig::None => shell_command(&command),
-    };
+    let mut child_cmd = shell_command(&command);
     child_cmd
         .current_dir(&cwd)
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(err))
         .stdin(Stdio::null());
+    #[cfg(unix)]
+    child_cmd.process_group(0);
     for (key, value) in &app.env {
         child_cmd.env(key, value);
     }
@@ -516,6 +519,7 @@ fn start_app(ctx: &mut ContextState, branch: &str, app_name: &str) -> Result<()>
         app_name.to_string(),
         AppState {
             pid: initial_pid,
+            process_group_id: app_process_group_id(initial_pid),
             url: url.clone(),
             log_path: log_path.clone(),
             started_at: Utc::now(),
@@ -581,10 +585,8 @@ fn logs(ctx: &ContextState, branch: &str, app: &str) -> Result<()> {
 
 fn stop_app(ctx: &mut ContextState, branch: &str, app: &str) -> Result<()> {
     let state = tracked_app_state(ctx, branch, app)?;
-    if process_alive(state.pid) {
-        let mut cmd = Command::new("kill");
-        cmd.arg(state.pid.to_string());
-        run_command(&mut cmd, None)?;
+    if state.process_group_id.is_some() || process_alive(state.pid) {
+        stop_process(state)?;
     }
     if let Some(worktree) = ctx
         .state
@@ -842,10 +844,6 @@ fn shell_command(command: &str) -> Command {
     cmd
 }
 
-fn shell_exec_command(command: &str) -> Command {
-    shell_command(&format!("exec {command}"))
-}
-
 fn run_command(command: &mut Command, timeout_seconds: Option<u64>) -> Result<()> {
     if let Some(timeout_seconds) = timeout_seconds {
         let mut child = command.spawn().context("spawn command")?;
@@ -877,6 +875,35 @@ fn process_alive(pid: u32) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+#[cfg(unix)]
+fn app_process_group_id(initial_pid: u32) -> Option<u32> {
+    Some(initial_pid)
+}
+
+#[cfg(not(unix))]
+fn app_process_group_id(_initial_pid: u32) -> Option<u32> {
+    None
+}
+
+fn stop_process(state: &AppState) -> Result<()> {
+    if let Some(process_group_id) = state.process_group_id
+        && process_group_id > 1
+    {
+        let mut cmd = Command::new("kill");
+        cmd.arg("--").arg(format!("-{process_group_id}"));
+        if run_command(&mut cmd, None).is_ok() {
+            return Ok(());
+        }
+    }
+
+    if process_alive(state.pid) {
+        let mut cmd = Command::new("kill");
+        cmd.arg(state.pid.to_string());
+        run_command(&mut cmd, None)?;
+    }
+    Ok(())
 }
 
 fn find_long_lived_app_pid(cwd: &Path) -> Option<u32> {
