@@ -478,7 +478,10 @@ fn start_app(ctx: &mut ContextState, branch: &str, app_name: &str) -> Result<()>
         .with_context(|| format!("open {}", log_path.display()))?;
     let err = log.try_clone()?;
 
-    let mut child_cmd = shell_exec_command(&command);
+    let mut child_cmd = match app.url {
+        UrlConfig::Portless { .. } => shell_exec_command(&command),
+        UrlConfig::RawPort { .. } | UrlConfig::None => shell_command(&command),
+    };
     child_cmd
         .current_dir(&cwd)
         .stdout(Stdio::from(log))
