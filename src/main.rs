@@ -490,6 +490,7 @@ fn start_app(ctx: &mut ContextState, branch: &str, app_name: &str) -> Result<()>
     let child = child_cmd
         .spawn()
         .with_context(|| format!("start `{}` in {}", command, cwd.display()))?;
+    let initial_pid = child.id();
 
     let repo_state = ctx
         .state
@@ -511,7 +512,7 @@ fn start_app(ctx: &mut ContextState, branch: &str, app_name: &str) -> Result<()>
     worktree_state.apps.insert(
         app_name.to_string(),
         AppState {
-            pid: child.id(),
+            pid: initial_pid,
             url: url.clone(),
             log_path: log_path.clone(),
             started_at: Utc::now(),
@@ -523,9 +524,21 @@ fn start_app(ctx: &mut ContextState, branch: &str, app_name: &str) -> Result<()>
         wait_for_health(&url, health_path, app.health_timeout_seconds.unwrap_or(45))?;
     }
 
+    let effective_pid = find_long_lived_app_pid(&cwd).unwrap_or(initial_pid);
+    if effective_pid != initial_pid
+        && let Some(app_state) = ctx
+            .state
+            .repos
+            .get_mut(&ctx.repo_key)
+            .and_then(|repo| repo.worktrees.get_mut(branch))
+            .and_then(|worktree| worktree.apps.get_mut(app_name))
+    {
+        app_state.pid = effective_pid;
+    }
+
     println!("App: {app_name}");
     println!("URL: {url}");
-    println!("PID: {}", child.id());
+    println!("PID: {effective_pid}");
     println!("Logs: {}", log_path.display());
     Ok(())
 }
@@ -860,6 +873,27 @@ fn process_alive(pid: u32) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+fn find_long_lived_app_pid(cwd: &Path) -> Option<u32> {
+    let cwd = cwd.to_string_lossy();
+    let output = Command::new("ps")
+        .args(["-ax", "-o", "pid=", "-o", "command="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let processes = String::from_utf8_lossy(&output.stdout);
+    processes.lines().find_map(|line| {
+        let trimmed = line.trim_start();
+        let (pid, command) = trimmed.split_once(' ')?;
+        if command.contains(cwd.as_ref()) && !command.contains("devtree") {
+            pid.parse::<u32>().ok().filter(|pid| process_alive(*pid))
+        } else {
+            None
+        }
+    })
 }
 
 fn check_command(name: &str) {
