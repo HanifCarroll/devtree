@@ -124,3 +124,7 @@ Run `devtree doctor` to see the exact local paths.
 ## License
 
 MIT
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
