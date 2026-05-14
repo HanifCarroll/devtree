@@ -705,7 +705,7 @@ fn command_for_app(config: &Config, app: &AppConfig) -> String {
     match &app.url {
         UrlConfig::Portless { name } => {
             let app_name = name.as_deref().unwrap_or(&config.name);
-            format!("portless {app_name} {}", app.command)
+            format!("portless run --name {app_name} {}", app.command)
         }
         UrlConfig::RawPort { .. } | UrlConfig::None => app.command.clone(),
     }

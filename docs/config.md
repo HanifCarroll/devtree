@@ -105,7 +105,7 @@ url:
 Runs:
 
 ```sh
-portless myapp <command>
+portless run --name myapp <command>
 ```
 
 ### Raw Port

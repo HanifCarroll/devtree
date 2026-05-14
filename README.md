@@ -86,7 +86,7 @@ apps:
     healthUrl: /api/health
 ```
 
-With Portless, `devtree start fix-navbar web` starts the app through `portless myapp ...`. In a linked worktree, Portless exposes a branch-scoped URL such as:
+With Portless, `devtree start fix-navbar web` starts the app through `portless run --name myapp ...`. In a linked worktree, Portless exposes a branch-scoped URL such as:
 
 ```txt
 https://fix-navbar.myapp.localhost

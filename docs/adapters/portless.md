@@ -5,7 +5,7 @@ Portless gives each worktree a stable local URL without manually choosing ports.
 `devtree` runs Portless like this:
 
 ```sh
-portless <name> <command>
+portless run --name <name> <command>
 ```
 
 For example:
@@ -28,7 +28,7 @@ devtree start issue-123 web
 starts:
 
 ```sh
-portless palabruno pnpm dev
+portless run --name palabruno pnpm dev
 ```
 
 Inside a linked Git worktree, Portless prefixes the branch name into the route, so the URL is:
