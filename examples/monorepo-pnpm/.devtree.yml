@@ -1,0 +1,25 @@
+name: monorepo
+worktreesRoot: ../monorepo-worktrees
+
+env:
+  optionalCopy:
+    - apps/web/.env.local
+
+setup:
+  - name: install dependencies
+    run: pnpm install --frozen-lockfile
+    timeoutSeconds: 900
+
+  - name: generate prisma client
+    cwd: apps/web
+    run: pnpm prisma generate
+    ifFileExists: prisma/schema.prisma
+
+apps:
+  web:
+    cwd: apps/web
+    command: pnpm dev
+    url:
+      provider: portless
+      name: monorepo
+    healthUrl: /api/health

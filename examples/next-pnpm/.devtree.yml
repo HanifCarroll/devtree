@@ -1,0 +1,20 @@
+name: nextapp
+worktreesRoot: ../nextapp-worktrees
+
+env:
+  optionalCopy:
+    - .env.local
+
+setup:
+  - name: install dependencies
+    run: pnpm install --frozen-lockfile
+    timeoutSeconds: 900
+
+apps:
+  web:
+    cwd: .
+    command: pnpm dev
+    url:
+      provider: portless
+      name: nextapp
+    healthUrl: /

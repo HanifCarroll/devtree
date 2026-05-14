@@ -1,0 +1,17 @@
+[package]
+name = "devtree"
+version = "0.1.0"
+edition = "2024"
+description = "Create runnable Git worktrees with setup commands, managed dev servers, and stable local URLs."
+license = "MIT"
+repository = "https://github.com/HanifCarroll/devtree"
+
+[dependencies]
+anyhow = "1.0.100"
+chrono = { version = "0.4.42", features = ["serde"] }
+clap = { version = "4.5.51", features = ["derive"] }
+directories = "6.0.0"
+reqwest = { version = "0.12.24", default-features = false, features = ["blocking", "rustls-tls"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_yaml = "0.9.34"
