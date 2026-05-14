@@ -524,6 +524,7 @@ fn start_app(ctx: &mut ContextState, branch: &str, app_name: &str) -> Result<()>
         wait_for_health(&url, health_path, app.health_timeout_seconds.unwrap_or(45))?;
     }
 
+    thread::sleep(Duration::from_millis(750));
     let effective_pid = find_long_lived_app_pid(&cwd).unwrap_or(initial_pid);
     if effective_pid != initial_pid
         && let Some(app_state) = ctx
