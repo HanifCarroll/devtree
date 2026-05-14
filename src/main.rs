@@ -885,28 +885,33 @@ fn find_long_lived_app_pid(cwd: &Path) -> Option<u32> {
         return None;
     }
     let processes = String::from_utf8_lossy(&output.stdout);
-    let mut candidates = processes.lines().filter_map(|line| {
-        let trimmed = line.trim_start();
-        let (pid, command) = trimmed.split_once(' ')?;
-        if command.contains(cwd.as_ref())
-            && !command.contains("devtree")
-            && !command.contains(" pnpm ")
-            && !command.contains("/pnpm ")
-            && !command.contains(" portless ")
-        {
-            pid.parse::<u32>()
-                .ok()
-                .filter(|pid| process_alive(*pid))
-                .map(|pid| (pid, command))
-        } else {
-            None
-        }
-    });
+    let candidates: Vec<(u32, &str)> = processes
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            let (pid, command) = trimmed.split_once(' ')?;
+            if command.contains(cwd.as_ref())
+                && !command.contains("devtree")
+                && !command.contains(" pnpm ")
+                && !command.contains("/pnpm ")
+                && !command.contains(" portless ")
+            {
+                pid.parse::<u32>()
+                    .ok()
+                    .filter(|pid| process_alive(*pid))
+                    .map(|pid| (pid, command))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     candidates
+        .iter()
+        .rev()
         .find(|(_, command)| command.contains("vite") || command.contains("next"))
-        .map(|(pid, _)| pid)
-        .or_else(|| candidates.next().map(|(pid, _)| pid))
+        .map(|(pid, _)| *pid)
+        .or_else(|| candidates.last().map(|(pid, _)| *pid))
 }
 
 fn check_command(name: &str) {
