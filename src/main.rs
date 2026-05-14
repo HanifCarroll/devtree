@@ -977,3 +977,203 @@ fn sanitize_branch(branch: &str) -> String {
 fn default_cwd() -> PathBuf {
     PathBuf::from(".")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    impl TestDir {
+        fn new(name: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos();
+            let path = env::temp_dir().join(format!("devtree-test-{name}-{nonce}"));
+            fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn join(&self, path: impl AsRef<Path>) -> PathBuf {
+            self.path.join(path)
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn test_config() -> Config {
+        Config {
+            name: "myapp".to_string(),
+            worktrees_root: PathBuf::from("../myapp-worktrees"),
+            env: EnvConfig::default(),
+            setup: Vec::new(),
+            apps: BTreeMap::new(),
+        }
+    }
+
+    fn app_config(command: &str, url: UrlConfig) -> AppConfig {
+        AppConfig {
+            command: command.to_string(),
+            cwd: PathBuf::from("."),
+            env: BTreeMap::new(),
+            url,
+            health_url: None,
+            health_timeout_seconds: None,
+        }
+    }
+
+    fn run_git(repo: &Path, args: &[&str]) {
+        run_command(Command::new("git").current_dir(repo).args(args), None).unwrap();
+    }
+
+    #[test]
+    fn sanitize_branch_makes_url_safe_route_segments() {
+        assert_eq!(sanitize_branch("Fix/Nav_Bar"), "fix-nav-bar");
+        assert_eq!(
+            sanitize_branch("feature/TICKET-123.preview"),
+            "feature-ticket-123-preview"
+        );
+        assert_eq!(sanitize_branch("---Already-Safe---"), "already-safe");
+    }
+
+    #[test]
+    fn join_url_handles_paths_and_absolute_urls() {
+        assert_eq!(
+            join_url("https://branch.app.localhost/", "/api/health"),
+            "https://branch.app.localhost/api/health"
+        );
+        assert_eq!(
+            join_url("https://branch.app.localhost", "api/health"),
+            "https://branch.app.localhost/api/health"
+        );
+        assert_eq!(
+            join_url(
+                "https://branch.app.localhost",
+                "http://127.0.0.1:3000/health"
+            ),
+            "http://127.0.0.1:3000/health"
+        );
+    }
+
+    #[test]
+    fn app_url_matches_provider_contracts() {
+        let config = test_config();
+        let portless_app = app_config(
+            "pnpm dev",
+            UrlConfig::Portless {
+                name: Some("palabruno".to_string()),
+            },
+        );
+        let raw_app = app_config(
+            "pnpm dev",
+            UrlConfig::RawPort {
+                url: "http://127.0.0.1:3000".to_string(),
+            },
+        );
+        let none_app = app_config("pnpm dev", UrlConfig::None);
+
+        assert_eq!(
+            app_url(&config, "Fix/Nav_Bar", &portless_app),
+            "https://fix-nav-bar.palabruno.localhost"
+        );
+        assert_eq!(
+            app_url(&config, "Fix/Nav_Bar", &raw_app),
+            "http://127.0.0.1:3000"
+        );
+        assert_eq!(app_url(&config, "Fix/Nav_Bar", &none_app), "none");
+    }
+
+    #[test]
+    fn command_for_app_wraps_only_portless_apps() {
+        let config = test_config();
+        let app = app_config("pnpm dev", UrlConfig::Portless { name: None });
+        let raw_app = app_config(
+            "pnpm dev",
+            UrlConfig::RawPort {
+                url: "http://127.0.0.1:3000".to_string(),
+            },
+        );
+
+        assert_eq!(
+            command_for_app(&config, &app),
+            "portless run --name myapp pnpm dev"
+        );
+        assert_eq!(command_for_app(&config, &raw_app), "pnpm dev");
+    }
+
+    #[test]
+    fn resolve_app_name_prefers_requested_then_default_then_first() {
+        let mut config = test_config();
+        config
+            .apps
+            .insert("web".to_string(), app_config("pnpm dev", UrlConfig::None));
+
+        assert_eq!(resolve_app_name(&config, Some("worker")).unwrap(), "worker");
+        assert_eq!(resolve_app_name(&config, None).unwrap(), "web");
+
+        config.apps.insert(
+            "default".to_string(),
+            app_config("cargo run", UrlConfig::None),
+        );
+        assert_eq!(resolve_app_name(&config, None).unwrap(), "default");
+    }
+
+    #[test]
+    fn should_skip_step_respects_file_gates() {
+        let worktree = TestDir::new("setup-gates");
+        let worktree_path = worktree.path.as_path();
+        fs::write(worktree.join("package.json"), "{}").expect("write marker");
+
+        let requires_existing = SetupStep {
+            name: "install".to_string(),
+            run: "pnpm install".to_string(),
+            cwd: PathBuf::from("."),
+            env: BTreeMap::new(),
+            if_file_exists: Some(PathBuf::from("package.json")),
+            if_file_missing: None,
+            timeout_seconds: None,
+        };
+        let requires_missing = SetupStep {
+            if_file_exists: None,
+            if_file_missing: Some(PathBuf::from("node_modules")),
+            ..requires_existing.clone()
+        };
+        let missing_required_file = SetupStep {
+            if_file_exists: Some(PathBuf::from("pnpm-lock.yaml")),
+            if_file_missing: None,
+            ..requires_existing.clone()
+        };
+
+        assert!(!should_skip_step(worktree_path, &requires_existing));
+        assert!(!should_skip_step(worktree_path, &requires_missing));
+        assert!(should_skip_step(worktree_path, &missing_required_file));
+
+        fs::create_dir(worktree.join("node_modules")).expect("create node_modules");
+        assert!(should_skip_step(worktree_path, &requires_missing));
+    }
+
+    #[test]
+    fn worktree_dirty_detects_uncommitted_changes() {
+        let repo = TestDir::new("dirty");
+        let repo_path = repo.path.as_path();
+        run_git(repo_path, &["init"]);
+        run_git(repo_path, &["config", "user.email", "test@example.com"]);
+        run_git(repo_path, &["config", "user.name", "Test"]);
+        fs::write(repo.join("README.md"), "hello\n").expect("write readme");
+        run_git(repo_path, &["add", "."]);
+        run_git(repo_path, &["commit", "-m", "init"]);
+
+        assert!(!worktree_dirty(repo_path).unwrap());
+
+        fs::write(repo.join("scratch.txt"), "local\n").expect("write untracked file");
+        assert!(worktree_dirty(repo_path).unwrap());
+    }
+}
